@@ -1,0 +1,30 @@
+1. **Purpose**: The code is a Python script for a port scanner tool. It scans network hosts for open ports, gathers additional information such as banners, geolocation, and service versions, and generates reports.
+
+2. **Organization**:
+   - The script is organized into classes to manage different functionalities.
+   - `NetworkConfig` class holds network-related configurations and constants.
+   - `Port_Scanner` class inherits from `NetworkConfig` and implements port scanning functionalities.
+   - `PortScannerEngine` class further extends `Port_Scanner` to handle user interactions and menu navigation.
+
+3. **Features**:
+   - **Port Scanning**: The script can scan both TCP and UDP ports.
+   - **Banner Grabbing**: It can retrieve banners from open ports.
+   - **Geolocation**: It fetches geolocation information for scanned hosts.
+   - **Service Version Detection**: The script attempts to determine the service versions running on open ports.
+   - **OS Detection**: It performs basic OS detection based on TTL values.
+   - **Reporting**: Generates reports in CSV, TXT, and JSON formats.
+
+4. **User Interaction**:
+   - The `PortScannerEngine` class manages user interactions through a command-line interface.
+   - Users can choose from different options such as port scanning, viewing help, or exiting the tool.
+   - The script guides the user through each step, prompting for necessary inputs.
+
+5. **Usage**:
+   - Users can run the script from the command line.
+   - Upon execution, users are presented with a menu to choose various options.
+   - They can input target hosts, specify scanning parameters, and choose whether to save the scan results to files.
+
+6. **Error Handling**:
+   - The code includes error handling to manage exceptions gracefully.
+   - It logs errors and provides feedback to users about encountered issues.
+

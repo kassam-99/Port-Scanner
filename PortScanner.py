@@ -1,21 +1,21 @@
 import datetime
-import ipaddress
-import os
-import ssl
-import subprocess
-import uuid
-import requests
-import requests
+import random
 import socket
+import ssl
+import threading
+import time
+from queue import Queue
+from typing import Dict, List, Optional, Tuple
+import ipaddress
+import requests
 import scapy.all as scapy
-from multiprocessing import Pool, Manager, cpu_count
+from bs4 import BeautifulSoup
 from ReportGenerator import Report_Generator
 
 
+
 PORTScannerLogo = """
-
 \033[35m
-
  /$$$$$$$                       /$$            /$$$$$$                                                             
 | $$__  $$                     | $$           /$$__  $$                                                            
 | $$  \ $$ /$$$$$$   /$$$$$$  /$$$$$$        | $$  \__/  /$$$$$$$  /$$$$$$  /$$$$$$$  /$$$$$$$   /$$$$$$   /$$$$$$ 
@@ -24,42 +24,28 @@ PORTScannerLogo = """
 | $$     | $$  | $$| $$        | $$ /$$       /$$  \ $$| $$       /$$__  $$| $$  | $$| $$  | $$| $$_____/| $$      
 | $$     |  $$$$$$/| $$        |  $$$$/      |  $$$$$$/|  $$$$$$$|  $$$$$$$| $$  | $$| $$  | $$|  $$$$$$$| $$      
 |__/      \______/ |__/         \___/         \______/  \_______/ \_______/|__/  |__/|__/  |__/ \_______/|__/      
-                                                                                                                   
-                                                                                                                   
-                                                                                                                        
-
-\033[0m                                                                        
+\033[0m
 
 Author: Kassam Dakhlalah               
 Github: kassam-99                      
-Version: 1.0, 28 May 2024               
+Version: 3.0, 8th June 2024               
 This project is open source
 For any information on editing         
 the project, please refer to PortScanner.txt                                   
-                                                                          
-
+                                                       
 """
 
-
 class NetworkConfig:
+    """Base configuration for network scanning."""
     def __init__(self):
-        
         self.GEOIP = "http://ip-api.com/json/"
         
-        self.DiscoveredPort = []
-        self.HostPort = {
-            "No.": None,
-            "IP": None,
-            "MAC": None,
-            "Time & Date" : None,
-            "Transport Layer": None,
-        }
 
         self.transport_mapping = {
             "tcp": socket.SOCK_STREAM,
             "udp": socket.SOCK_DGRAM
         }
-            
+        
         self.TCP_Ports = {
             "http": 80,                     # Hypertext Transfer Protocol (HTTP)
             "https": 443,                   # HTTP Secure (HTTPS)
@@ -139,470 +125,808 @@ class NetworkConfig:
             "olsr": 698,                    # Optimized Link State Routing Protocol (OLSR)
             "wemo": 49153,                  # WeMo Home Automation
         }
+        
+        self.common_ports = {
+            "FTP": 21,
+            "SSH": 22,
+            "Telnet": 23,
+            "DNS": 53,
+            "DHCP Server": 67,
+            "DHCP Client": 68,
+            "HTTP": 80,
+            "NTP": 123,
+            "SNMP": 161,
+            "HTTPS": 443,
+            "IKE": 500,
+            "Syslog": 514,
+            "PPTP VPN": 1723,
+            "SSDP": 1900,
+            "RDP": 3389,
+            "STUN": 3478,
+            "NAT-T": 4500,
+            "UniFi Controller": 8443
+        }
 
-    
-    
 
+    def show_usage_examples(self) -> None:
+        """Display usage examples for the scanner."""
+        examples = """
+# Usage Examples
+Below are examples demonstrating all possible options for each parameter when running the scanner.
 
+1. Basic Single Host Scan (all options):
+   - Single IP with TCP connect scan, minimal ports, verbose output, and aggressive timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.1
+     > Transport: tcp
+     > Ports: 80
+     > Timeout: 1
+     > Retries: 2
+     > Verbose: true
+     > Timing: T4
+     > Scan type: connect
 
+   - Single IP with UDP SYN scan, multiple ports, quiet output, and slow timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.1
+     > Transport: udp
+     > Ports: 53,161
+     > Timeout: 5
+     > Retries: 5
+     > Verbose: false
+     > Timing: T0
+     > Scan type: syn
 
+   - Single IP with TCP SYN scan, port range, moderate timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.1
+     > Transport: tcp
+     > Ports: 1-100
+     > Timeout: 3
+     > Retries: 3
+     > Verbose: true
+     > Timing: T3
+     > Scan type: syn
 
+   - Single IP with named ports (e.g., http, ssh), fast timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.1
+     > Transport: tcp
+     > Ports: http,ssh
+     > Timeout: 0.5
+     > Retries: 1
+     > Verbose: false
+     > Timing: T5
+     > Scan type: connect
 
-class Port_Scanner(NetworkConfig):
-    def __init__(self, targets=None, Transport_Layer=None, ports=None, time_out=2, retries=3, verbose=False):
+2. Subnet Scan (all options):
+   - Subnet with TCP connect scan, common ports, verbose, and polite timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.0/24
+     > Transport: tcp
+     > Ports: 22,80,443
+     > Timeout: 2
+     > Retries: 3
+     > Verbose: true
+     > Timing: T2
+     > Scan type: connect
+
+   - Subnet with UDP SYN scan, wide port range, quiet, and sneaky timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.0/24
+     > Transport: udp
+     > Ports: 1-1000
+     > Timeout: 4
+     > Retries: 4
+     > Verbose: false
+     > Timing: T1
+     > Scan type: syn
+
+   - Subnet with TCP SYN scan, specific ports, normal timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.0/24
+     > Transport: tcp
+     > Ports: 80,443,3306
+     > Timeout: 2
+     > Retries: 2
+     > Verbose: true
+     > Timing: T3
+     > Scan type: syn
+
+   - Subnet with mixed ports (named and numeric), aggressive timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.0/24
+     > Transport: tcp
+     > Ports: ftp,80,443
+     > Timeout: 1
+     > Retries: 1
+     > Verbose: false
+     > Timing: T4
+     > Scan type: connect
+
+3. Multiple Hosts Scan (all options):
+   - Multiple IPs with TCP connect scan, small port range, verbose, and insane timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.1,192.168.1.2,192.168.1.3
+     > Transport: tcp
+     > Ports: 80-85
+     > Timeout: 0.5
+     > Retries: 1
+     > Verbose: true
+     > Timing: T5
+     > Scan type: connect
+
+   - Multiple IPs with UDP SYN scan, named ports, quiet, and paranoid timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.1,192.168.1.10
+     > Transport: udp
+     > Ports: dns,snmp
+     > Timeout: 6
+     > Retries: 5
+     > Verbose: false
+     > Timing: T0
+     > Scan type: syn
+
+   - Multiple IPs with TCP SYN scan, mixed ports, moderate timing:
+     > Enter choice: 1
+     > Targets: 192.168.1.1,192.168.1.100
+     > Transport: tcp
+     > Ports: 22,80-90,443
+     > Timeout: 3
+     > Retries: 3
+     > Verbose: true
+     > Timing: T3
+     > Scan type: syn
+"""
+        print("\033[32m=== Usage Examples ===\033[0m")
+        print(examples)
+
+class PortScanner(NetworkConfig):
+    """Main port scanning class with Nmap-like features."""
+    def __init__(self, targets: str, transport_layer: str = "tcp", ports: str = "80", 
+                 timeout: float = 2.0, retries: int = 3, verbose: bool = False, 
+                 timing_template: str = "T3"):
         super().__init__()
+        
+        self.Reporter = Report_Generator()
         self.targets = targets
-        self.Transport_Layer = Transport_Layer
+        self.transport_layer = transport_layer.lower()
         self.ports = ports
-        self.time_out = time_out
+        self.timeout = timeout
         self.retries = retries
         self.verbose = verbose
-        self.DiscoveredPort = []
-        self.Reporter = Report_Generator()
-        self.logfile = 'scan_log.txt'
+        self.timing_template = timing_template
+        self.discovered_ports: List[Dict] = []
+        self.queue = Queue()
+        self.results: List[int] = []
+        self.logfile = "scan_log.txt"
+        self.lock = threading.Lock()
 
-    def log(self, message):
-        if self.verbose == True:
-            print(message)
-        with open(self.logfile, 'a') as log_file:
-            log_file.write(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
-            
 
-    def TargetSocketConn(self, Socket_Transport, Socket_target, Socket_port):
-        for attempt in range(self.retries):
+    def log(self, message: str) -> None:
+        """Log messages to file and console if verbose."""
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = f"{timestamp} - {message}"
+        if self.verbose:
+            print(log_entry)
+        with open(self.logfile, 'a') as f:
+            f.write(f"{log_entry}\n")
+
+
+    def resolve_domain(self, target: str) -> List[str]:
+        """Resolve domain name to IP addresses or validate IP."""
+        try:
+            ipaddress.ip_address(target)
+            return [target]  # It's already an IP
+        except ValueError:
             try:
-                with socket.socket(socket.AF_INET, Socket_Transport) as GoScan:
-                    GoScan.settimeout(self.time_out)
-                    result = GoScan.connect_ex((Socket_target, Socket_port))
-                    if result == 0:
-                        return result
-            except socket.timeout:
-                self.log(f"Timeout on attempt {attempt + 1} for {Socket_target}:{Socket_port}")
-            except socket.error as e:
-                self.log(f"Socket error on attempt {attempt + 1} for {Socket_target}:{Socket_port} - {e}")
-        return result
+                # Resolve domain to IP(s)
+                ips = [addr[4][0] for addr in socket.getaddrinfo(target, None, socket.AF_INET)]
+                self.log(f"Resolved {target} to {ips}")
+                return ips
+            except socket.gaierror as e:
+                self.log(f"Failed to resolve domain {target} - {e}")
+                return []
+
+
+    def parse_ports(self) -> List[int]:
+        """Parse port input into a list of integers based on user input."""
+        ports_list = []
     
-
-    def banner_grabber(self, target, port):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(self.time_out)
-                s.connect((target, port))
-                if port == 80:
-                    s.sendall(b"GET / HTTP/1.0\r\n\r\n")
-                elif port == 21:
-                    s.sendall(b"HEAD / HTTP/1.1\r\nHost: " + target.encode() + b"\r\n\r\n")
+        input_ports = self.ports.lower()
+    
+        if input_ports == "all":
+            ports_list = list(self.TCP_Ports.values()) + list(self.UDP_Ports.values())
+        elif input_ports == "all_tcp_only":
+            ports_list = list(self.TCP_Ports.values())
+        elif input_ports == "all_udp_only":
+            ports_list = list(self.UDP_Ports.values())
+        elif input_ports == "all_common_ports":
+            ports_list = list(self.common_ports.values())
+        elif input_ports == "full_range":
+            ports_list = list(range(1, 65536))
+        elif input_ports == "well_known":
+            ports_list = list(range(0, 1024))
+        elif input_ports == "registered":
+            ports_list = list(range(1024, 49152))
+        elif input_ports in {"dynamic", "private"}:
+            ports_list = list(range(49152, 65536))
+        else:
+            for port in self.ports.replace(" ", "").split(","):
+                if "-" in port:
+                    try:
+                        start, end = map(int, port.split("-"))
+                        ports_list.extend(range(start, end + 1))
+                    except ValueError:
+                        self.log(f"Invalid port range format: {port}")
+                elif port.isdigit():
+                    ports_list.append(int(port))
+                elif port.lower() in self.TCP_Ports:
+                    ports_list.append(self.TCP_Ports[port.lower()])
+                elif port.lower() in self.UDP_Ports:
+                    ports_list.append(self.UDP_Ports[port.lower()])
                 else:
-                    s.sendall(b"\r\n")
-                banner = s.recv(1024).decode().strip()
-                return banner
-        except socket.error as e:
-            self.log(f"Error grabbing banner from {target}:{port} - {e}")
-            return "Unknown"
-        
+                    self.log(f"Unknown port alias: {port}")
+    
+        # Filter valid port range, remove duplicates, and sort
+        return sorted(set(p for p in ports_list if 1 <= p <= 65535))
 
-    def get_geolocation(self, ip):
+
+    def parse_http_headers(self, banner: str) -> str:
+        """Parse and format key HTTP headers from a banner string."""
+        lines = banner.split("\r\n")
+        formatted = []
+        for line in lines:
+            if line.lower().startswith("http/") or any(h in line.lower() for h in [
+                "server", "content-type", "location", "date", "cache-control", "expires"
+            ]):
+                formatted.append(line.strip())
+        return "\n".join(formatted)
+
+
+    def connect_scan(self, target: str, port: int) -> bool:
+        """Perform a TCP connect scan."""
+        sock_type = self.transport_mapping.get(self.transport_layer)
+        if not sock_type:
+            self.log(f"Invalid transport layer: {self.transport_layer}")
+            return False
+        for _ in range(self.retries):
+            try:
+                with socket.socket(socket.AF_INET, sock_type) as s:
+                    s.settimeout(self.timeout)
+                    result = s.connect_ex((target, port))
+                    return result == 0
+            except (socket.timeout, socket.error) as e:
+                self.log(f"Connect scan error for {target}:{port} - {e}")
+        return False
+
+
+    def syn_scan(self, target: str, port: int) -> str:
+        """Perform a TCP SYN scan (requires root privileges)."""
         try:
-            private_ips = [
-                '10.0.0.0/8',
-                '172.16.0.0/12',
-                '192.168.0.0/16',
-                '169.254.0.0/16',
-                '127.0.0.0/8',
-                '::1',
-                'fe80::/10',
-                'fc00::/7'
-            ]
-            for private_ip in private_ips:
-                if ipaddress.ip_address(ip) in ipaddress.ip_network(private_ip):
-                    response = requests.get('https://api.ipify.org?format=json')
-                    if response.status_code == 200:
-                        public_ip_data = response.json()
-                        public_ip = public_ip_data.get('ip', 'Unknown')
-                        # Get geolocation of public IP
-                        response = requests.get(f"{self.GEOIP}{public_ip}")
-                        if response.status_code == 200:
-                            data = response.json()
-                            return f"{data['city']}, {data['regionName']}, {data['country']}"
-                        else:
-                            return "Unknown location"
-                    else:
-                        return "Unknown location"
-            
-            # If the provided IP is not private, proceed with fetching its geolocation
-            response = requests.get(f"{self.GEOIP}{ip}")
-            if response.status_code == 200:
-                data = response.json()
-                return f"{data['city']}, {data['regionName']}, {data['country']}"
-            else:
-                return "Unknown location"
+            src_port = random.randint(1024, 65535)
+            pkt = scapy.IP(dst=target) / scapy.TCP(sport=src_port, dport=port, flags="S")
+            response = scapy.sr1(pkt, timeout=self.timeout, verbose=False)
+            if response is None:
+                return "filtered"
+            elif response.haslayer(scapy.TCP):
+                if response[scapy.TCP].flags == "SA":  # SYN-ACK
+                    scapy.send(scapy.IP(dst=target) / scapy.TCP(sport=src_port, dport=port, flags="R"), verbose=False)
+                    return "open"
+                elif response[scapy.TCP].flags == "RA":  # RST-ACK
+                    return "closed"
+            return "filtered"
         except Exception as e:
-            self.log(f"Error fetching geolocation for {ip} - {e}")
-            return "Unknown location"
-
+            self.log(f"SYN scan error for {target}:{port} - {e}")
+            return "error"
+    
+    
+    def ack_scan(self, target: str, port: int) -> str:
+        """Perform an ACK scan to detect filtered/unfiltered state."""
+        try:
+            pkt = scapy.IP(dst=target) / scapy.TCP(dport=port, flags="A")
+            resp = scapy.sr1(pkt, timeout=self.timeout, verbose=False)
+            if resp is None:
+                return "filtered"
+            elif resp.haslayer(scapy.TCP) and resp[scapy.TCP].flags == "R":
+                return "unfiltered"
+            return "unknown"
+        except Exception as e:
+            self.log(f"ACK scan error for {target}:{port} - {e}")
+            return "error"
+    
+    
+    def window_scan(self, target: str, port: int) -> str:
+        """Perform a Window scan based on TCP window size."""
+        try:
+            pkt = scapy.IP(dst=target) / scapy.TCP(dport=port, flags="A")
+            resp = scapy.sr1(pkt, timeout=self.timeout, verbose=False)
+            if resp and resp.haslayer(scapy.TCP):
+                window_size = resp[scapy.TCP].window
+                if window_size > 0:
+                    return "open"
+                else:
+                    return "closed"
+            return "filtered"
+        except Exception as e:
+            self.log(f"Window scan error for {target}:{port} - {e}")
+            return "error"
+    
+    
+    def fin_scan(self, target: str, port: int) -> str:
+        """Perform a FIN scan."""
+        try:
+            pkt = scapy.IP(dst=target) / scapy.TCP(dport=port, flags="F")
+            resp = scapy.sr1(pkt, timeout=self.timeout, verbose=False)
+            if resp is None:
+                return "open"
+            elif resp.haslayer(scapy.TCP) and resp[scapy.TCP].flags == "R":
+                return "closed"
+            return "filtered"
+        except Exception as e:
+            self.log(f"FIN scan error for {target}:{port} - {e}")
+            return "error"
+    
+    
+    def xmas_scan(self, target: str, port: int) -> str:
+        """Perform a Xmas scan (FIN+URG+PSH)."""
+        try:
+            pkt = scapy.IP(dst=target) / scapy.TCP(dport=port, flags="FUP")
+            resp = scapy.sr1(pkt, timeout=self.timeout, verbose=False)
+            if resp is None:
+                return "open"
+            elif resp.haslayer(scapy.TCP) and resp[scapy.TCP].flags == "R":
+                return "closed"
+            return "filtered"
+        except Exception as e:
+            self.log(f"Xmas scan error for {target}:{port} - {e}")
+            return "error"
+    
+    
+    def null_scan(self, target: str, port: int) -> str:
+        """Perform a NULL scan (no flags)."""
+        try:
+            pkt = scapy.IP(dst=target) / scapy.TCP(dport=port, flags=0)
+            resp = scapy.sr1(pkt, timeout=self.timeout, verbose=False)
+            if resp is None:
+                return "open"
+            elif resp.haslayer(scapy.TCP) and resp[scapy.TCP].flags == "R":
+                return "closed"
+            return "filtered"
+        except Exception as e:
+            self.log(f"NULL scan error for {target}:{port} - {e}")
+            return "error"
+    
+        
+    def banner_grabber(self, target: str, port: int) -> str:
+        """Grab banner for TCP and selected UDP services."""
+        try:
+            # TCP banner grabbing
+            if self.transport_layer == "tcp":
+                if port == 443:
+                    context = ssl._create_unverified_context()
+                    with socket.create_connection((target, port), timeout=self.timeout) as sock:
+                        with context.wrap_socket(sock, server_hostname=target) as ssock:
+                            ssock.sendall(b"HEAD / HTTP/1.1\r\nHost: %b\r\n\r\n" % target.encode())
+                            return ssock.recv(1024).decode(errors="ignore").strip()
+                elif port == 80:
+                    with socket.create_connection((target, port), timeout=self.timeout) as s:
+                        s.sendall(b"HEAD / HTTP/1.1\r\nHost: %b\r\n\r\n" % target.encode())
+                        return s.recv(1024).decode(errors="ignore").strip()
+                else:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(self.timeout)
+                        s.connect((target, port))
+                        s.sendall(b"\r\n")
+                        return s.recv(1024).decode(errors="ignore").strip()
+    
+            # UDP banner grabbing (specific services only)
+            elif self.transport_layer == "udp":
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(self.timeout)
+    
+                if port == 161:  # SNMP v1 request
+                    # Simple SNMP GET request packet (community string: "public")
+                    snmp_packet = bytes.fromhex("30 26 02 01 01 04 06 70 75 62 6c 69 63 a0 19 02 04 70 69 6e 67 02 01 00 02 01 00 30 0b 30 09 06 05 2b 06 01 02 01 05 00")
+                    sock.sendto(snmp_packet, (target, port))
+                    data, _ = sock.recvfrom(1024)
+                    return data.decode(errors="ignore").strip()
+    
+                elif port == 123:  # NTP
+                    ntp_data = b'\x1b' + 47 * b'\0'
+                    sock.sendto(ntp_data, (target, port))
+                    data, _ = sock.recvfrom(512)
+                    return "NTP response received" if data else "No response"
+    
+                elif port == 53:  # DNS (send a dummy query)
+                    dns_query = bytes.fromhex("aa aa 01 00 00 01 00 00 00 00 00 00 03 77 77 77 06 67 6f 6f 67 6c 65 03 63 6f 6d 00 00 01 00 01")
+                    sock.sendto(dns_query, (target, port))
+                    data, _ = sock.recvfrom(1024)
+                    return "DNS response received" if data else "No response"
+    
+                else:
+                    # Generic UDP probe
+                    sock.sendto(b"\x00", (target, port))
+                    data, _ = sock.recvfrom(512)
+                    return data.decode(errors="ignore").strip()
+    
+        except Exception as e:
+            self.log(f"UDP banner grab error for {target}:{port} - {e}")
+            return "Unknown"
+    
         
 
-    def get_ssl_certificate(self, target, port=443):
+    def get_geolocation(self, ip: str) -> str:
+        """Fetch geolocation for an IP."""
         try:
-            context = ssl.create_default_context()
-            with socket.create_connection((target, port)) as sock:
+            if ipaddress.ip_address(ip).is_private:
+                response = requests.get("https://api.ipify.org?format=json", timeout=5)
+                ip = response.json().get("ip", ip)
+            response = requests.get(f"{self.GEOIP}{ip}", timeout=5)
+            data = response.json()
+            return f"{data.get('city', 'Unknown')}, {data.get('regionName', 'Unknown')}, {data.get('country', 'Unknown')}"
+        except Exception as e:
+            self.log(f"Geolocation error for {ip} - {e}")
+            return "Unknown"
+
+
+    def get_ssl_certificate(self, target: str, port: int = 443) -> Dict:
+        """Retrieve SSL certificate details."""
+        try:
+            context = ssl._create_unverified_context()  # Use unverified context to avoid verify failures
+            with socket.create_connection((target, port), timeout=self.timeout) as sock:
                 with context.wrap_socket(sock, server_hostname=target) as ssock:
                     cert = ssock.getpeercert()
-                    return cert
+                    return {"issuer": cert.get("issuer", [])}
         except Exception as e:
-            self.log(f"Error retrieving SSL certificate from {target}:{port} - {e}")
-            return "Unknown certificate"
-        
+            self.log(f"SSL cert error for {target}:{port} - {e}")
+            return {"issuer": "Unknown"}
 
-    def GetProtocol(self, dictionary, value):
-        try:
-            for key, val in dictionary.items():
-                if val == value:
-                    return key
-            return "Unknown"
-        except Exception as e:
-            self.log(f"Error retrieving protocol - {e}")
-            return "Unknown"
-        
 
-    def GetMacAddress(self, Target_IP):
+
+    def get_mac_address(self, target: str) -> str:
+        """Get MAC address via ARP."""
         try:
-            arp_request = scapy.ARP(pdst=Target_IP)
+            arp_request = scapy.ARP(pdst=target)
             broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
             arp_request_broadcast = broadcast / arp_request
             answered_list = scapy.srp(arp_request_broadcast, timeout=5, verbose=False)[0]
-            for sent, received in answered_list:
-                return received.hwsrc
+            return answered_list[0][1].hwsrc if answered_list else "Unknown"
         except Exception as e:
-            self.log(f"Error getting MAC address using scapy for {Target_IP} - {e}")
+            self.log(f"MAC address error for {target} - {e}")
+            return "Unknown"
+
+
+    def os_detection(self, target: str) -> str:
+        """Detect OS via TCP/IP fingerprinting."""
         try:
-            arp_output = subprocess.check_output(["arp", "-n", Target_IP], encoding='utf-8')
-            for line in arp_output.splitlines():
-                if Target_IP in line:
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        return parts[2]
+            pkt = scapy.IP(dst=target) / scapy.TCP(flags="S", options=[("MSS", 1460), ("WScale", 2)])
+            response = scapy.sr1(pkt, timeout=2, verbose=False)
+            if response and response.haslayer(scapy.TCP):
+                ttl = response[scapy.IP].ttl
+                window = response[scapy.TCP].window
+                if ttl <= 64 and window > 0:
+                    return "Linux/Unix"
+                elif ttl <= 128:
+                    return "Windows"
+            return "Unknown"
         except Exception as e:
-            self.log(f"Error getting MAC address using arp for {Target_IP} - {e}")
-        return "Unknown"
+            self.log(f"OS detection error for {target} - {e}")
+            return "Unknown"
+
+
+    def service_version(self, target: str, port: int) -> str:
+        """Detect service and its version using banner grabbing."""
+        banner = self.banner_grabber(target, port)
+        parsed_banner = self.parse_http_headers(banner)
     
-
-    def Verbos_Process(self, Vtarget, Vresult, Vport, Vscan_type):
         try:
-            if Vresult == 0:
-                if Vscan_type == socket.SOCK_STREAM:
-                    self.log(f"{Vtarget} - {self.GetProtocol(self.TCP_Ports, Vport)}:{Vport} is open.")
-                elif Vscan_type == socket.SOCK_DGRAM:
-                    self.log(f"{Vtarget} - {self.GetProtocol(self.UDP_Ports, Vport)}:{Vport} is open.")
-                return Vport
-            else:
-                if Vscan_type == socket.SOCK_STREAM:
-                    self.log(f"{Vtarget} - {self.GetProtocol(self.TCP_Ports, Vport)}:{Vport} is closed.")
-                elif Vscan_type == socket.SOCK_DGRAM:
-                    self.log(f"{Vtarget} - {self.GetProtocol(self.UDP_Ports, Vport)}:{Vport} is closed.")
-                return None
-        except Exception as e:
-            self.log(f"Error processing verbose output for {Vtarget}:{Vport} - {e}")
-            return None
-        
-
-    def OS_detection(self, target):
-        try:
-            ans, unans = scapy.sr(scapy.IP(dst=target) / scapy.TCP(flags="S"), timeout=2)
-            for sent, received in ans:
-                if received.haslayer(scapy.TCP) and received[scapy.TCP].flags == "SA":
-                    ttl = received[scapy.IP].ttl
-                    if ttl <= 64:
-                        return "Linux/Unix"
-                    elif ttl <= 128:
-                        return "Windows"
-                    else:
-                        return "Unknown"
-            return "No response"
-        except Exception as e:
-            self.log(f"Error performing OS detection for {target} - {e}")
-            return "Error"
-        
-
-    def Service_version(self, target, port):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(self.time_out)
-            s.connect((target, port))
             service = socket.getservbyport(port)
-            banner = self.banner_grabber(target, port)
-        except socket.timeout:
-            self.log(f"Timeout occurred while connecting to {target}:{port}")
-            banner = "Unknown"
-        except socket.error as e:
-            self.log(f"Socket error for {target}:{port} - {e}")
-            banner = "Unknown"
-        except Exception as e:
-            self.log(f"Error performing service version detection for {target}:{port} - {e}")
-            banner = "Unknown"
-        finally:
-            s.close()
-        return f"Service: {service}, Banner: {banner}"
+        except Exception:
+            service = "Unknown"
     
+        version_info = parsed_banner if parsed_banner else banner
     
-    def scan_target(self, target):
-        filtered_ports = []
+        if version_info.strip() == "" or version_info == "Unknown":
+            return f"Service: {service}, Version: "
+        return f"Service: {service}, Version: {version_info}"
+
+
+
+    def discover_hosts(self, subnet: str) -> List[str]:
+        """Perform host discovery via ARP."""
         try:
-            scan_type = self.transport_mapping.get(self.Transport_Layer.lower())
-            if scan_type is None:
-                self.log("Invalid transport layer specified. Use 'TCP' or 'UDP'.")
-                return None
-            ports_list = self.ports.replace(" ", "").split(',')
+            arp_request = scapy.ARP(pdst=subnet)
+            broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
+            arp_request_broadcast = broadcast / arp_request
+            answered_list = scapy.srp(arp_request_broadcast, timeout=5, verbose=False)[0]
+            hosts = [received.psrc for sent, received in answered_list]
+            self.log(f"Discovered hosts: {hosts}")
+            return hosts
+        except Exception as e:
+            self.log(f"Host discovery error for {subnet} - {e}")
+            return []
+
+
+    def worker(self, target: str, scan_type: str) -> None:
+        while not self.queue.empty():
+            port = self.queue.get()
+    
+            if scan_type == "connect":
+                result = self.connect_scan(target, port)
+                state = "open" if result else "closed"
+            elif scan_type == "syn":
+                state = self.syn_scan(target, port)
+            elif scan_type == "ack":
+                state = self.ack_scan(target, port)
+            elif scan_type == "window":
+                state = self.window_scan(target, port)
+            elif scan_type == "fin":
+                state = self.fin_scan(target, port)
+            elif scan_type == "xmas":
+                state = self.xmas_scan(target, port)
+            elif scan_type == "null":
+                state = self.null_scan(target, port)
+            else:
+                self.log(f"Unknown scan type: {scan_type}")
+                self.queue.task_done()
+                continue
+    
+            with self.lock:
+                if state == "open" and port not in self.results:
+                    self.results.append(port)
+                    self.log(f"{target}:{port} is open ({scan_type})")
+                elif state == "closed":
+                    self.log(f"{target}:{port} is closed ({scan_type})")
+                elif state == "filtered":
+                    self.log(f"{target}:{port} is filtered ({scan_type})")
+                elif state == "unfiltered":
+                    self.log(f"{target}:{port} is unfiltered ({scan_type})")
+                else:
+                    self.log(f"{target}:{port} scan returned {state} ({scan_type})")
+            self.queue.task_done()
+
+
+
+
+    def scan_target(self, target: str, scan_type: str = "syn") -> Optional[Dict]:
+        """Scan a single target."""
+        try:
+            self.results = []
+            ports_list = self.parse_ports()
             for port in ports_list:
-                if '-' in port:
-                    start, end = port.split('-')
-                    if start.isdigit() and end.isdigit():
-                        start_port = int(start)
-                        end_port = int(end)
-                        for port_int in range(start_port, end_port + 1):
-                            if 1 <= port_int <= 65535:
-                                result = self.TargetSocketConn(Socket_Transport=scan_type, Socket_target=target, Socket_port=port_int)
-                                self.Verbos_Process(Vtarget=target, Vresult=result, Vport=port_int, Vscan_type=scan_type)
-                                if result == 0:
-                                    filtered_ports.append(port_int)
-                elif port.isdigit():
-                    port_int = int(port)
-                    if 1 <= port_int <= 65535:
-                        result = self.TargetSocketConn(Socket_Transport=scan_type, Socket_target=target, Socket_port=port_int)
-                        self.Verbos_Process(Vtarget=target, Vresult=result, Vport=port_int, Vscan_type=scan_type)
-                        if result == 0:
-                            filtered_ports.append(port_int)
-                elif (port.lower() in self.TCP_Ports) and (scan_type == socket.SOCK_STREAM):
-                    result = self.TargetSocketConn(Socket_Transport=scan_type, Socket_target=target, Socket_port=self.TCP_Ports[port.lower()])
-                    self.Verbos_Process(Vtarget=target, Vresult=result, Vport=self.TCP_Ports[port.lower()], Vscan_type=scan_type)
-                    if result == 0:
-                        filtered_ports.append(self.TCP_Ports[port.lower()])
-                elif (port.lower() in self.UDP_Ports) and (scan_type == socket.SOCK_DGRAM):
-                    result = self.TargetSocketConn(Socket_Transport=scan_type, Socket_target=target, Socket_port=self.UDP_Ports[port.lower()])
-                    self.Verbos_Process(Vtarget=target, Vresult=result, Vport=self.UDP_Ports[port.lower()], Vscan_type=scan_type)
-                    if result == 0:
-                        filtered_ports.append(self.UDP_Ports[port.lower()])
-                else:
-                    self.log(f"Invalid port specified: {port}.")
-                    continue
-            self.HostPort = {
-                "No.": str(uuid.uuid4()),
+                self.queue.put(port)
+
+            delay, _, max_threads = self.set_timing()
+            threads = []
+            for _ in range(min(max_threads, len(ports_list))):
+                t = threading.Thread(target=self.worker, args=(target, scan_type))
+                t.start()
+                threads.append(t)
+                time.sleep(delay)
+
+            for t in threads:
+                t.join()
+
+            host_info = {
                 "IP": target,
-                "MAC": self.GetMacAddress(target),
-                "Time & Date": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                "Transport Layer": self.Transport_Layer.lower(),
+                "MAC": self.get_mac_address(target),
+                "Time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "Transport": self.transport_layer,
+                "OS": self.os_detection(target),
+                "Geolocation": self.get_geolocation(target),
+                "Ports": {}
             }
-            for port in filtered_ports:
-                if scan_type == socket.SOCK_STREAM:
-                    port_name = self.GetProtocol(self.TCP_Ports, port)
-                    self.HostPort[f"{port_name}:{port}"] = "Open"
-                elif scan_type == socket.SOCK_DGRAM:
-                    port_name = self.GetProtocol(self.UDP_Ports, port)
-                    self.HostPort[f"{port_name}:{port}"] = "Open"
-            return self.HostPort
-        except Exception as e:
-            self.log(f"Error scanning target {target} - {e}")
-            return None
-    
-
-    def extended_scan_target(self, target):
-        try:
-            scan_results = self.scan_target(target)
-            if scan_results:
-                os_details = self.OS_detection(target)
-                scan_results["OS Details"] = os_details
-                service_versions = {}
-                for port in scan_results.keys():
-                    if isinstance(port, int):
-                        service = self.Service_version(target, port)
-                        service_versions[port] = service
-                scan_results["Service Versions"] = service_versions
-                geolocation = self.get_geolocation(target)
-                scan_results["Geolocation"] = geolocation
-                ssl_certificate = self.get_ssl_certificate(target)
-                scan_results["SSL Certificate"] = ssl_certificate
-            return scan_results
-        except Exception as e:
-            self.log(f"Error scanning target {target} - {e}")
-            return None
-        
-
-    def Scanner(self, save_to_file=False):
-        try:
-            scan_type = self.transport_mapping.get(self.Transport_Layer.lower())
-            if scan_type is None:
-                raise ValueError("Invalid transport layer specified. Use 'TCP' or 'UDP'.")
-            if self.ports:
-                with Pool(processes=cpu_count()) as pool:
-                    results = pool.map(self.extended_scan_target, self.targets.replace(" ", "").split(','))
-                self.DiscoveredPort.extend(results)
-            else:
-                raise ValueError("No ports specified for scanning.")
-            
-            if save_to_file:
-                if self.DiscoveredPort:
-                    self.Reporter.CSV_GenerateReport(Data=self.DiscoveredPort)
-                    self.Reporter.TXT_GenerateReport(Data=self.DiscoveredPort)
-                    self.Reporter.JSON_GenerateReport(Data=self.DiscoveredPort)
+            for port in ports_list:
+                if port in self.results:
+                    state = "open"
+                    service = self.service_version(target, port)
                 else:
-                    self.log("No scan results to generate reports.")
-        except socket.error as e:
-            self.log(f"Socket error: {e}")
-        except ValueError as ve:
-            self.log(f"Value error: {ve}")
+                    state = self.syn_scan(target, port) if scan_type == "syn" else ("closed" if not self.connect_scan(target, port) else "open")
+                    service = "Unknown" if state != "open" else self.service_version(target, port)
+                host_info["Ports"][port] = {"State": state, "Service": service}
+            if scan_type == "syn" and 443 in self.results:
+                host_info["SSL"] = self.get_ssl_certificate(target)
+            return host_info
         except Exception as e:
-            self.log(f"Unexpected error: {e}")
-    
+            self.log(f"Scan error for {target} - {e}")
+            return None
 
 
 
-
-
-
-
-
-
-class PortScannerEngine(Port_Scanner):
-    def __init__(self):
-        super().__init__()
-        
-        self.MainMenu = {
-            "Port Scanner" : self.ScannerOptions,
-            "Help" : self.HelpOptions,
-            "Exit" : lambda: os.abort()
+    def set_timing(self) -> Tuple[float, int, int]:
+        """Set timing parameters like Nmap's -T options."""
+        timing_options = {
+            "T0": (0.5, 5, 10),  # Paranoid
+            "T1": (0.3, 4, 15),  # Sneaky
+            "T2": (0.2, 3, 20),  # Polite
+            "T3": (0.1, 2, 30),  # Normal
+            "T4": (0.05, 1, 50), # Aggressive
+            "T5": (0.02, 1, 100) # Insane
         }
-        
-
-    def get_user_input(self, param_name, default_value=None):
-        while True:
-            try:
-                user_input = input(f"[\033[36m>\u001b[0m] Enter value for {param_name} (default: {default_value}): ").strip()
-                if not user_input:
-                    return default_value
-                elif isinstance(default_value, bool):
-                    return user_input.lower() in ['true', 'yes', '1']
-                elif isinstance(default_value, int):
-                    return int(user_input)
-                elif isinstance(default_value, float):
-                    return float(user_input)
-                else:
-                    return user_input
-            except ValueError:
-                print("[\033[31m!\u001b[0m] Invalid input. Please enter a valid value.")
+        return timing_options.get(self.timing_template, (0.1, 2, 30))
 
 
-    def ScannerOptions(self, **kwargs):
-        Dtargets = kwargs.get("targets", self.get_user_input("targets"))
-        DTransport_Layer = kwargs.get("Transport_Layer", self.get_user_input("Transport_Layer"))
-        Dports = kwargs.get("ports", self.get_user_input("ports"))
-        Dtime_out = kwargs.get("time_out", self.get_user_input("time_out", 2))
-        Dretries = kwargs.get("retries", self.get_user_input("retries", 3))
-        Dverbose = kwargs.get("verbose", self.get_user_input("verbose", False))
-        save_to_file = kwargs.get("save_to_file", self.get_user_input("save_to_file", False))
-        
-        Zscanner = Port_Scanner(
-            targets=Dtargets, 
-            Transport_Layer=DTransport_Layer, 
-            ports=Dports, 
-            time_out=Dtime_out, 
-            retries=Dretries, 
-            verbose=Dverbose)
-        Zscanner.Scanner(save_to_file=save_to_file)
-        
-
-    def HelpOptions(self):
-        with open("PortScanner.txt", "r") as HelpRead:
-            print(HelpRead.read())
-            
-
-    def ViewFunc(self, option):
-        if isinstance(option, str) and option.lower() == "all":
-            print("==============================")
-            for index, view in enumerate(self.MainMenu):
-                print(f"\033[34m{index+1}\u001b[0m) {view}")
-            print("==============================")
-        
-        elif isinstance(option, int):
-            if 1 <= option <= len(self.MainMenu):
-                key = list(self.MainMenu.keys())[option - 1]
-                submenu = self.MainMenu[key]()
-                if submenu:
-                    self.print_submenu(submenu)
-                    sub_option = input("[\033[36m>\u001b[0m] Select to run: ")
-                    self.handle_submenu(submenu, sub_option)
-                else:
-                    print(f"{option}. {key}")
+    def scan(self, save_to_file: bool = False, scan_type: str = "syn") -> None:
+        """Perform the full scan."""
+        target_list = []
+        seen_ips = set()
+    
+        for target in self.targets.split(","):
+            if "/" in target:
+                hosts = self.discover_hosts(target)
             else:
-                print(f"[\033[31m!\u001b[0m] Please choose an option within the range 1 - {len(self.MainMenu)}")
+                hosts = list(set(self.resolve_domain(target)))  
+            target_list.extend(hosts)
+    
+        if not target_list:
+            self.log("No valid targets resolved")
+            return
+    
+        for ip in target_list:
+            ip = ip.strip()
+            if ip in seen_ips:
+                continue
+            seen_ips.add(ip)
+            result = self.scan_target(ip, scan_type)
+            if result:
+                self.discovered_ports.append(result)
+    
+        if save_to_file and self.discovered_ports:
+            self.Reporter.CSV_GenerateReport(Data=self.discovered_ports)
+            self.Reporter.TXT_GenerateReport(Data=self.discovered_ports)
+            self.Reporter.JSON_GenerateReport(Data=self.discovered_ports)
+    
+        if self.verbose and self.discovered_ports:
+            print("\n\033[32m=== Final Scan Results ===\033[0m")
+            for result in self.discovered_ports:
+                print(f"\nHost: {result['IP']} ({result['Geolocation']})")
+                print(f"MAC Address: {result['MAC']}")
+                print(f"OS: {result['OS']}")
+                print("\033[1mPORT     STATE     SERVICE\033[0m")
+        
+                # Port statistics
+                open_count = closed_count = filtered_count = unfiltered_count = 0
+                services = []
+        
+                for port, info in result["Ports"].items():
+                    port_str = f"\033[36m{port:<8}\033[0m"
+                    state = info["State"]
+                    service = info["Service"]
+                    services.append(service)
+        
+                    if state == "open":
+                        open_count += 1
+                        state_str = f"\033[32m{state:<8}\033[0m"
+                    elif state == "closed":
+                        closed_count += 1
+                        state_str = f"\033[31m{state:<8}\033[0m"
+                    elif state == "filtered":
+                        filtered_count += 1
+                        state_str = f"\033[33m{state:<8}\033[0m"
+                    elif state == "unfiltered":
+                        unfiltered_count += 1
+                        state_str = f"\033[34m{state:<8}\033[0m"
+                    else:
+                        state_str = f"{state:<8}"
+        
+                    print(f"{port_str} {state_str} {service}")
+        
+                # SSL Info
+                if "SSL" in result:
+                    issuer = result.get("SSL", {}).get("issuer", [])
+                    issuer_str = ", ".join(f"{x[0]}={x[1]}" for x in issuer) if isinstance(issuer, list) else "Unknown"
+                    print(f"SSL Issuer: {issuer_str}")
+        
+                # Detection Summary
+                print("\n\033[35m--- Detection Summary ---\033[0m")
+                print(f"Total Ports Scanned: {len(result['Ports'])}")
+                print(f"Open: \033[32m{open_count}\033[0m | Closed: \033[31m{closed_count}\033[0m | "
+                      f"Filtered: \033[33m{filtered_count}\033[0m | Unfiltered: \033[34m{unfiltered_count}\033[0m")
+                print(f"Unique Services: {len(set(services))}")
+                print(f"Detected OS: {result['OS']}")
+                print(f"Scan Timestamp: {result['Time']}")
+        
+        
+        
+        
+        
 
-        elif isinstance(option, str):
-            option = option.capitalize()
-            if option in self.MainMenu:
-                submenu = self.MainMenu[option]()
-                if submenu:
-                    self.print_submenu(submenu)
-                    sub_option = input("[\033[36m>\u001b[0m] Select to run: ")
-                    self.handle_submenu(submenu, sub_option)
-                else:
-                    print(f"{option}. {submenu}")
-            else:
-                print(f"[\033[31m!\u001b[0m] Invalid option: {option}")
-                
+class PortScannerEngine(PortScanner):
+    """User interface for the port scanner."""
+    def __init__(self):
+        self.scanner = None
 
-    def print_submenu(self, submenu):
-        print("==============================")
-        for idx, sub_key in enumerate(submenu):
-            print(f"\033[34m{idx+1}\u001b[0m) {sub_key}")
-        print("==============================")
+    def get_user_input(self, prompt: str, default: str) -> str:
+        value = input(f"\n[\033[36m>\033[0m] {prompt} (default: {default}): ").strip()
+        return value if value else default
 
-
-    def handle_submenu(self, submenu, sub_option):
-        if sub_option.isdigit():
-            sub_option = int(sub_option)
-            if 1 <= sub_option <= len(submenu):
-                sub_key = list(submenu.keys())[sub_option - 1]
-                submenu[sub_key]()
-            else:
-                print(f"[\033[31m!\u001b[0m] Please choose an option within the range 1 - {len(submenu)}")
-
+    def to_bool(self, value: str) -> bool:
+        true_values = {"true", "t", "yes", "y", "1"}
+        false_values = {"false", "f", "no", "n", "0"}
+        value = value.strip().lower()
+        if value in true_values:
+            return True
+        elif value in false_values:
+            return False
         else:
-            print(f"[\033[31m!\u001b[0m] Invalid option: {sub_option}")
+            print(f"[\033[33m!\033[0m] Unrecognized input '{value}', defaulting to False.")
+            return False
 
+    def read_targets_from_file(self, filepath: str) -> str:
+        try:
+            with open(filepath, 'r') as f:
+                lines = [line.strip() for line in f if line.strip()]
+                return ",".join(lines)
+        except Exception as e:
+            print(f"\033[31m[!] Failed to read from file: {filepath} - {e}\033[0m")
+            return ""
 
+    def run(self) -> None:
+        print(PORTScannerLogo)
+        while True:
+            print("\n\033[35m=== Port Scanner Dashboard ===\033[0m")
+            print("\033[36m1)\033[0m Scan Ports")
+            print("\033[36m2)\033[0m Show Usage Examples")
+            print("\033[36m3)\033[0m Exit")
+            choice = input("\n[\033[36m>\033[0m] Enter your choice: ").strip().lower()
 
+            if choice in {"3", "exit"}:
+                print("\033[32m[✓] Goodbye!\033[0m")
+                break
 
+            elif choice == "1":
+                targets = self.get_user_input("Targets (IP, domain, or 'file:filename.txt')", "192.168.1.1")
+                if targets.startswith("file:"):
+                    filepath = targets.split("file:")[-1]
+                    targets = self.read_targets_from_file(filepath)
+                    if not targets:
+                        continue
+                ports = self.get_user_input("Ports (e.g., 80,443, 1-100 or all_tcp_only/all_udp_only/all_common_ports/full_range/well_known/registered/dynamic)", "80,443")
+                transport = self.get_user_input("Transport (tcp/udp/all)", "tcp")
+                scan_type = self.get_user_input("Scan type (connect/syn/ack/window/fin/xmas/null/all)", "syn")
+                timeout = float(self.get_user_input("Timeout (seconds)", "2"))
+                retries = int(self.get_user_input("Retries", "3"))
+                timing = self.get_user_input("Timing (T0-T5)", "T3")
+                verbose_input = self.get_user_input("Verbose (True/False)", "True")
+                save_input = self.get_user_input("Save report to file (True/False)", "False")
 
+                verbose = self.to_bool(verbose_input)
+                save_to_file = self.to_bool(save_input)
 
+                scan_types = ["connect", "syn", "ack", "window", "fin", "xmas", "null"]
+                transports = ["tcp", "udp"]
 
+                selected_scan_types = scan_types if scan_type == "all" else [scan_type]
+                selected_transports = transports if transport == "all" else [transport]
 
+                for selected_transport in selected_transports:
+                    for selected_scan in selected_scan_types:
+                        print(f"\n\033[34m--- Scanning with transport: {selected_transport.upper()}, scan type: {selected_scan.upper()} ---\033[0m")
+                        self.scanner = PortScanner(targets, selected_transport, ports, timeout, retries, verbose, timing)
+                        self.scanner.scan(save_to_file=save_to_file, scan_type=selected_scan)
 
+                        if save_to_file:
+                            print("\033[32m[✓] Reports saved as CSV, TXT, and JSON.\033[0m")
+
+            elif choice == "2":
+                self.show_usage_examples()
+
+            else:
+                print(f"\033[31m[!] Invalid choice: {choice}\033[0m")
 
 
 def main():
-    engine = PortScannerEngine()
-    print(PORTScannerLogo)
-    while True:
-        engine.ViewFunc("all")
-        try:
-            option = input("\n[\033[36m>\u001b[0m] Enter your choice (or '\033[31mexit\u001b[0m' to quit): ").strip().lower()
-            if option == 'exit':
-                engine.MainMenu["Exit"]()
-                break
-            elif option.isdigit():
-                engine.ViewFunc(int(option))
-            else:
-                engine.ViewFunc(option.capitalize())
+    try:
+        engine = PortScannerEngine()
+        engine.run()
+        
+    except KeyboardInterrupt:
+        print("\n\033[32m[✓] Program terminated by user.\033[0m")
+    except Exception as e:
+        print(f"\033[31m[!] Critical Error: {e}\033[0m")
 
-        except ValueError:
-            print("[\033[31m!\u001b[0m] Invalid input. Please enter a number or '\033[31mexit\u001b[0m' to quit.")
-        except KeyError:
-            print("[\033[31m!\u001b[0m] Invalid option. Please choose a valid option number or name.")
-        except Exception as e:
-            print(f"[\033[31m!\u001b[0m] An unexpected error occurred: {e}")
 
-            
 
 if __name__ == "__main__":
     main()
-    
-    
